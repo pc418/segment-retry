@@ -81,8 +81,7 @@ It does **not** help with:
 2. Open
    <https://github.com/pc418/segment-retry/raw/main/segment-retry.user.js>
    and click **Install**.
-   Or install from Greasy Fork: https://greasyfork.org/scripts/TODO
-   <!-- TODO (owner): replace TODO with the Greasy Fork script ID once published. -->
+   Or install from [Greasy Fork](https://greasyfork.org/scripts/597607-video-segment-retry-stop-hls-dash-skips-and-stalls).
 3. Reload any video page that was already open.
 
 ## How to tell it is working
@@ -160,7 +159,7 @@ include:
 适用于基于 hls.js、video.js、dash.js、shaka-player 的网页播放器，包括嵌入框架里的播放器。
 
 **安装：** 先安装 Tampermonkey 或 Violentmonkey，然后打开
-<https://github.com/pc418/segment-retry/raw/main/segment-retry.user.js> 点击“安装”，再刷新视频页面。
+<https://github.com/pc418/segment-retry/raw/main/segment-retry.user.js>（或 [Greasy Fork](https://greasyfork.org/scripts/597607-video-segment-retry-stop-hls-dash-skips-and-stalls)）点击“安装”，再刷新视频页面。
 
 **如何确认在工作：** 按 F12（Mac 上按 Cmd+Option+J）打开控制台，在过滤框输入 `segment-retry`。
 看到 `streaming video detected` 说明脚本已启用；`retry 1/5` 表示正在重试，`recovered after` 表示已恢复。
