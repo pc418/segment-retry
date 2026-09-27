@@ -1,0 +1,12 @@
+{
+  "name": "segment-retry",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Userscript that retries failed or cut-off video segment downloads so web players stop skipping.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --check segment-retry.user.js && node --test \"test/*.test.mjs\""
+  },
+  "engines": { "node": ">=20" }
+}
