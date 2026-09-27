@@ -146,3 +146,48 @@ test('PIN: a timeout is passed through without retry', async () => {
   assert.equal(network.sent.length, 1);
   assert.deepEqual(r.seen.events, ['loadstart', 'timeout', 'loadend']);
 });
+
+test('status and headers polled during the backoff wait show nothing from the 503', async () => {
+  reset([503, 'ok']);
+  const xhr = new XMLHttpRequest();
+  const done = new Promise((res) => xhr.addEventListener('loadend', res));
+  xhr.open('GET', 'https://cdn.test/v/seg1.ts');
+  xhr.responseType = 'arraybuffer';
+  xhr.send();
+  await new Promise((res) => setTimeout(res, 3)); // 503 lands ~1 ms, retry sent ~6 ms
+  assert.equal(network.sent.length, 1, 'still in the backoff wait');
+  assert.equal(xhr.status, 0);
+  assert.equal(xhr.getResponseHeader('content-length'), null);
+  await done;
+  assert.equal(xhr.status, 200);
+});
+
+test('on-handler and listeners run in registration order, like native XHR', async () => {
+  reset(['ok']);
+  const xhr = new XMLHttpRequest();
+  const order = [];
+  xhr.addEventListener('load', () => order.push('listener-before'));
+  xhr.onload = () => order.push('onload');
+  xhr.addEventListener('load', () => order.push('listener-after'));
+  xhr.onload = () => order.push('onload-replaced'); // keeps its original slot
+  const done = new Promise((res) => xhr.addEventListener('loadend', res));
+  xhr.open('GET', 'https://cdn.test/v/seg1.ts');
+  xhr.send();
+  await done;
+  assert.deepEqual(order, ['listener-before', 'onload-replaced', 'listener-after']);
+  assert.equal(typeof xhr.onload, 'function');
+  xhr.onload = null;
+  assert.equal(xhr.onload, null);
+});
+
+test('reopening the XHR from its abort handler keeps the new OPENED state', async () => {
+  reset(['neterr', 'ok']);
+  const xhr = new XMLHttpRequest();
+  xhr.onabort = () => xhr.open('GET', 'https://cdn.test/v/seg2.ts');
+  xhr.open('GET', 'https://cdn.test/v/seg1.ts');
+  xhr.responseType = 'arraybuffer';
+  xhr.send();
+  await new Promise((res) => setTimeout(res, 3));
+  xhr.abort();
+  assert.equal(xhr.readyState, 1);
+});

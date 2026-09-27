@@ -77,20 +77,13 @@
     constructor() {
       if (!streaming) return new NativeXHR(); // no video yet: plain browser XHR
       super();
-      for (const t of EVENTS) this['on' + t] = null;
+      this._handlers = {};
       this._props = {};
       this._headers = [];
       this._mime = null;
       this._rs = 0;
       this._x = this._wire(new NativeXHR());
-      this._shown = this._x; // the attempt whose status and headers the page reads
-      for (const t of EVENTS) {
-        // on-handlers run inside dispatch, so event.target is this wrapper
-        this.addEventListener(t, (e) => {
-          const handler = this['on' + t];
-          if (typeof handler === 'function') handler.call(this, e);
-        });
-      }
+      this._shown = null; // the attempt whose status and headers the page may read
     }
 
     _wire(x) {
@@ -163,7 +156,7 @@
       this._emit('readystatechange');
       this._emit(type, e);
       this._emit('loadend', e);
-      if (type === 'abort') this._rs = 0; // aborted requests end UNSENT
+      if (type === 'abort' && this._rs === 4) this._rs = 0; // aborted requests end UNSENT, unless reopened
     }
 
     open(method, url, async) {
@@ -177,7 +170,7 @@
       this._started = false;
       this._aborted = false;
       this._x.open(...this._openArgs);
-      this._shown = this._x;
+      this._shown = null;
     }
 
     send(body) {
@@ -203,16 +196,16 @@
 
     setRequestHeader(k, v) { this._headers.push([k, v]); this._x.setRequestHeader(k, v); }
     overrideMimeType(m) { this._mime = m; this._x.overrideMimeType(m); }
-    getResponseHeader(n) { return this._shown.getResponseHeader(n); }
-    getAllResponseHeaders() { return this._shown.getAllResponseHeaders(); }
+    getResponseHeader(n) { return this._shown ? this._shown.getResponseHeader(n) : null; }
+    getAllResponseHeaders() { return this._shown ? this._shown.getAllResponseHeaders() : ''; }
 
     get readyState() { return this._rs; }
-    get status() { return this._shown.status; }
-    get statusText() { return this._shown.statusText; }
+    get status() { return this._shown ? this._shown.status : 0; }
+    get statusText() { return this._shown ? this._shown.statusText : ''; }
     get response() { return this._x.response; }
     get responseText() { return this._x.responseText; }
     get responseXML() { return this._x.responseXML; }
-    get responseURL() { return this._shown.responseURL; }
+    get responseURL() { return this._shown ? this._shown.responseURL : ''; }
     get upload() { return this._x.upload; }
   }
 
@@ -220,6 +213,24 @@
     Object.defineProperty(RetryXHR.prototype, p, {
       get() { return this._x[p]; },
       set(v) { this._x[p] = v; this._props[p] = v; },
+    });
+  }
+  // on-handlers are real listeners, added where the page first sets them (as
+  // native event handlers are), so they run in order with event.target set.
+  for (const t of EVENTS) {
+    Object.defineProperty(RetryXHR.prototype, 'on' + t, {
+      get() { return this._handlers[t]?.fn ?? null; },
+      set(fn) {
+        const slot = this._handlers[t];
+        if (typeof fn !== 'function') {
+          if (slot) { this.removeEventListener(t, slot.listener); delete this._handlers[t]; }
+          return;
+        }
+        if (slot) { slot.fn = fn; return; }
+        const entry = { fn, listener: (e) => entry.fn.call(this, e) };
+        this._handlers[t] = entry;
+        this.addEventListener(t, entry.listener);
+      },
     });
   }
   // `xhr instanceof XMLHttpRequest` stays true for the plain ones too.
@@ -235,6 +246,13 @@
 
   // -------------------------------------------------------------- fetch ----
   const nativeFetch = window.fetch;
+
+  // A rebuilt Response carries the original's url/redirected/type, clones too.
+  function withMeta(out, res) {
+    for (const k of ['url', 'redirected', 'type']) Object.defineProperty(out, k, { value: res[k] });
+    Object.defineProperty(out, 'clone', { value: () => withMeta(Response.prototype.clone.call(out), res) });
+    return out;
+  }
 
   function sleep(ms, signal) {
     return new Promise((resolve, reject) => {
@@ -275,9 +293,7 @@
           reason = shortBody(buf.byteLength, (n) => res.headers.get(n));
           if (!reason || last) {
             if (!reason) recovered();
-            const out = new Response(buf, { status: res.status, statusText: res.statusText, headers: res.headers });
-            for (const k of ['url', 'redirected', 'type']) Object.defineProperty(out, k, { value: res[k] });
-            return out;
+            return withMeta(new Response(buf, { status: res.status, statusText: res.statusText, headers: res.headers }), res);
           }
         }
       } catch (err) {

@@ -29,6 +29,10 @@ test('the rebuilt Response keeps url, redirected, type and headers', async () =>
   assert.equal(r.redirected, true);
   assert.equal(r.type, network.lastResponse.type);
   assert.equal(r.headers.get('content-length'), '1000');
+  const c = r.clone();
+  assert.equal(c.url, 'https://cdn.test/v/seg3.ts', 'clone keeps url');
+  assert.equal(c.redirected, true, 'clone keeps redirected');
+  assert.equal((await c.arrayBuffer()).byteLength, 1000);
 });
 
 test('large or unknown-length bodies stream through as the native Response', async () => {
