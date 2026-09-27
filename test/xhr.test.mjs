@@ -109,3 +109,40 @@ test('segments disguised as images are retried when fetched as arraybuffer', asy
   assert.equal(network.sent.length, 2);
   assert.equal(r.bytes, 1000);
 });
+
+test('on-handlers run during dispatch: event.target is the XHR', async () => {
+  reset(['neterr', 'ok']);
+  const r = await pageXhr();
+  assert.ok(r.seen.targetOK.length >= 5);
+  assert.ok(r.seen.targetOK.every(Boolean), 'target/currentTarget set in every on-handler');
+});
+
+test('a 503 attempt that will be retried is never visible to the page', async () => {
+  reset([503, 503, 'ok']);
+  const r = await pageXhr();
+  assert.equal(network.sent.length, 3);
+  assert.deepEqual(r.seen.states, [1, 2, 3, 4]);
+  assert.ok(r.seen.statuses.every((s) => s === 200), `statuses seen: ${r.seen.statuses}`);
+  assert.equal(r.seen.events.filter((e) => e === 'progress').length, 1, 'progress only from the good attempt');
+});
+
+test('abort during backoff reports an empty request and ends UNSENT', async () => {
+  for (const first of ['cut', 503]) {
+    reset([first, 'ok']);
+    const r = await pageXhr({ abortAfterMs: 3 });
+    assert.equal(network.sent.length, 1, `${first}: no second send`);
+    assert.equal(r.status, 0, `${first}: status after abort`);
+    assert.equal(r.bytes, null, `${first}: no body from the discarded attempt`);
+    assert.equal(r.xhr.readyState, 0, `${first}: readyState UNSENT after abort`);
+  }
+});
+
+// PIN: XHR timeouts are passed through, not retried. Lead decision 2026-09-26
+// (Codex finding 5 declined): the page's own timeout and the players' own
+// timeout-retry policies stay in charge. Source: docs/260926-feat-segment-retry.md
+test('PIN: a timeout is passed through without retry', async () => {
+  reset(['timeout', 'ok']);
+  const r = await pageXhr();
+  assert.equal(network.sent.length, 1);
+  assert.deepEqual(r.seen.events, ['loadstart', 'timeout', 'loadend']);
+});

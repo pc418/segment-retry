@@ -21,11 +21,24 @@ test('cut-off, network error and 503 are retried until the full body arrives', a
   assert.match(logs.join('\n'), /recovered after 3 retries/);
 });
 
-test('the rebuilt Response keeps the original url and headers', async () => {
-  reset(['ok']);
+test('the rebuilt Response keeps url, redirected, type and headers', async () => {
+  reset(['cut', 'ok']);
   const r = await fetch('https://cdn.test/v/seg3.ts');
+  assert.notEqual(r, network.lastResponse, 'rebuilt after checking the body');
+  assert.equal(r.url, 'https://cdn.test/v/seg3.ts');
+  assert.equal(r.redirected, true);
+  assert.equal(r.type, network.lastResponse.type);
   assert.equal(r.headers.get('content-length'), '1000');
-  assert.equal(typeof r.url, 'string');
+});
+
+test('large or unknown-length bodies stream through as the native Response', async () => {
+  reset(['big']);
+  let r = await fetch('https://cdn.test/movie.mp4');
+  assert.equal(r, network.lastResponse, 'same object, not buffered');
+
+  reset(['nolength']);
+  r = await fetch('https://cdn.test/v/seg9.ts');
+  assert.equal(r, network.lastResponse);
 });
 
 test('404 is returned as-is', async () => {

@@ -19,6 +19,7 @@
 
   const MAX_TRIES = 6;       // attempts per segment, first one included
   const BASE_DELAY_MS = 500; // backoff: 0.5 s, 1 s, 2 s, 4 s, 8 s
+  const MAX_FETCH_BUFFER = 32 * 1024 * 1024; // larger fetch bodies stream through unchecked
   // Media-segment URLs. XHRs with responseType arraybuffer/blob count too, which
   // catches players that disguise segments as .jpg/.png/.html.
   const SEGMENT_URL = /\.(ts|m4s|mp4|m4v|m4a|aac|mp3|cmfv|cmfa|webm|vtt)(?:[?#]|$)/i;
@@ -82,6 +83,14 @@
       this._mime = null;
       this._rs = 0;
       this._x = this._wire(new NativeXHR());
+      this._shown = this._x; // the attempt whose status and headers the page reads
+      for (const t of EVENTS) {
+        // on-handlers run inside dispatch, so event.target is this wrapper
+        this.addEventListener(t, (e) => {
+          const handler = this['on' + t];
+          if (typeof handler === 'function') handler.call(this, e);
+        });
+      }
     }
 
     _wire(x) {
@@ -93,21 +102,27 @@
       const ev = src && 'loaded' in src
         ? new ProgressEvent(type, { lengthComputable: src.lengthComputable, loaded: src.loaded, total: src.total })
         : new Event(type);
-      const handler = this['on' + type];
-      if (typeof handler === 'function') {
-        try { handler.call(this, ev); } catch (err) { setTimeout(() => { throw err; }); }
-      }
       this.dispatchEvent(ev);
+    }
+
+    // An attempt whose status already means it will be retried stays hidden:
+    // no HEADERS_RECEIVED/LOADING, no progress, its status never readable.
+    _doomed(x) {
+      return retryableStatus(x.status) && this._tries < this._maxTries && !this._aborted;
     }
 
     _onInner(type, e, x) {
       if (type === 'readystatechange') {
         // DONE is held until load/error/timeout/abort decides whether to retry.
+        if (x.readyState >= 2) {
+          if (this._doomed(x)) return;
+          this._shown = x;
+        }
         if (x.readyState < 4 && x.readyState > this._rs) { this._rs = x.readyState; this._emit(type); }
         return;
       }
       if (type === 'loadstart') { if (!this._started) { this._started = true; this._emit(type, e); } return; }
-      if (type === 'progress') { this._emit(type, e); return; }
+      if (type === 'progress') { if (!this._doomed(x)) this._emit(type, e); return; }
       if (type === 'loadend') return; // emitted by _finish
 
       let reason = null;
@@ -143,10 +158,12 @@
 
     _finish(type, e) {
       if (this._tries > 1 && type === 'load') log(`recovered after ${this._tries - 1} retr${this._tries > 2 ? 'ies' : 'y'}:`, this._url);
+      this._shown = this._x;
       this._rs = 4;
       this._emit('readystatechange');
       this._emit(type, e);
       this._emit('loadend', e);
+      if (type === 'abort') this._rs = 0; // aborted requests end UNSENT
     }
 
     open(method, url, async) {
@@ -160,6 +177,7 @@
       this._started = false;
       this._aborted = false;
       this._x.open(...this._openArgs);
+      this._shown = this._x;
     }
 
     send(body) {
@@ -174,6 +192,9 @@
       if (this._timer) { // between attempts: nothing in flight to abort
         clearTimeout(this._timer);
         this._timer = 0;
+        // report an empty aborted request, not the discarded failed attempt
+        this._x = this._wire(new NativeXHR());
+        if ('responseType' in this._props) this._x.responseType = this._props.responseType;
         this._finish('abort', null);
         return;
       }
@@ -182,16 +203,16 @@
 
     setRequestHeader(k, v) { this._headers.push([k, v]); this._x.setRequestHeader(k, v); }
     overrideMimeType(m) { this._mime = m; this._x.overrideMimeType(m); }
-    getResponseHeader(n) { return this._x.getResponseHeader(n); }
-    getAllResponseHeaders() { return this._x.getAllResponseHeaders(); }
+    getResponseHeader(n) { return this._shown.getResponseHeader(n); }
+    getAllResponseHeaders() { return this._shown.getAllResponseHeaders(); }
 
     get readyState() { return this._rs; }
-    get status() { return this._x.status; }
-    get statusText() { return this._x.statusText; }
+    get status() { return this._shown.status; }
+    get statusText() { return this._shown.statusText; }
     get response() { return this._x.response; }
     get responseText() { return this._x.responseText; }
     get responseXML() { return this._x.responseXML; }
-    get responseURL() { return this._x.responseURL; }
+    get responseURL() { return this._shown.responseURL; }
     get upload() { return this._x.upload; }
   }
 
@@ -236,18 +257,26 @@
       let reason;
       try {
         const res = await nativeFetch.call(this, isReq ? input.clone() : input, init);
+        const recovered = () => { if (attempt > 1) log(`recovered after ${attempt - 1} retr${attempt > 2 ? 'ies' : 'y'}:`, url); };
+        const len = parseInt(res.headers.get('content-length'), 10);
         if (retryableStatus(res.status) && !last) {
           reason = 'HTTP ' + res.status;
+          res.body?.cancel().catch(() => {});
         } else if (res.status !== 200 && res.status !== 206) {
           return res;
+        } else if (!(len > 0 && len <= MAX_FETCH_BUFFER) || res.headers.get('content-encoding')) {
+          // Only a segment-sized body of known length can be checked. Whole
+          // files and unknown lengths stream through as the native Response.
+          recovered();
+          return res;
         } else {
-          // Buffer the whole segment so a cut-off body is caught here.
+          // Buffer the segment so a cut-off body is caught here.
           const buf = await res.arrayBuffer();
           reason = shortBody(buf.byteLength, (n) => res.headers.get(n));
           if (!reason || last) {
-            if (attempt > 1 && !reason) log(`recovered after ${attempt - 1} retr${attempt > 2 ? 'ies' : 'y'}:`, url);
+            if (!reason) recovered();
             const out = new Response(buf, { status: res.status, statusText: res.statusText, headers: res.headers });
-            Object.defineProperty(out, 'url', { value: res.url });
+            for (const k of ['url', 'redirected', 'type']) Object.defineProperty(out, k, { value: res[k] });
             return out;
           }
         }

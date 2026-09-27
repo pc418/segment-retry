@@ -56,9 +56,9 @@ export class FakeXHR extends EventTarget {
     this._fire('loadstart', { loaded: 0, total: 0 });
     this._timer = setTimeout(() => {
       this._timer = null;
-      if (outcome === 'neterr') {
+      if (outcome === 'neterr' || outcome === 'timeout') {
         this._state(4);
-        this._fire('error', { loaded: 0, total: 0 });
+        this._fire(outcome === 'neterr' ? 'error' : 'timeout', { loaded: 0, total: 0 });
         this._fire('loadend', { loaded: 0, total: 0 });
         return;
       }
@@ -94,8 +94,14 @@ export async function fakeFetch(input, init) {
   if (outcome === 'neterr') throw new TypeError('Failed to fetch');
   const body = new Uint8Array(outcome === 'cut' ? 600 : typeof outcome === 'number' ? 10 : FULL);
   const status = typeof outcome === 'number' ? outcome : 200;
-  const length = status === 200 ? FULL : 10;
-  return new Response(status === 204 ? null : body, { status, headers: { 'content-length': String(length) } });
+  const headers = {};
+  if (outcome === 'big') headers['content-length'] = String(50 * 1024 * 1024);
+  else if (outcome !== 'nolength') headers['content-length'] = String(status === 200 ? FULL : 10);
+  const res = new Response(status === 204 ? null : body, { status, headers });
+  Object.defineProperty(res, 'url', { value: url });
+  Object.defineProperty(res, 'redirected', { value: true });
+  network.lastResponse = res;
+  return res;
 }
 
 export const logs = [];
@@ -126,10 +132,14 @@ export function reset(plan = []) {
 // Sends one XHR the way hls.js does and records everything the page observes.
 export function pageXhr({ method = 'GET', url = 'https://cdn.test/v/seg1.ts', responseType = 'arraybuffer', headers = {}, abortAfterMs } = {}) {
   const xhr = new XMLHttpRequest();
-  const seen = { events: [], states: [], onload: 0 };
+  const seen = { events: [], states: [], statuses: [], onload: 0, targetOK: [] };
   return new Promise((resolve) => {
-    xhr.onreadystatechange = () => seen.states.push(xhr.readyState);
-    xhr.onload = () => { seen.onload++; };
+    xhr.onreadystatechange = (e) => {
+      seen.states.push(xhr.readyState);
+      if (xhr.readyState >= 2) seen.statuses.push(xhr.status);
+      seen.targetOK.push(e.target === xhr && e.currentTarget === xhr);
+    };
+    xhr.onload = (e) => { seen.onload++; seen.targetOK.push(e.target === xhr && e.target.response === xhr.response); };
     for (const t of ['loadstart', 'progress', 'load', 'error', 'abort', 'timeout', 'loadend']) {
       xhr.addEventListener(t, () => {
         seen.events.push(t);
