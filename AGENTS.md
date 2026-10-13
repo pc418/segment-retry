@@ -32,12 +32,14 @@ Greasy Fork (Greasy Fork syncs from the raw GitHub URL).
 5. `instanceof XMLHttpRequest` stays true for both wrapped and plain instances.
 6. No network calls of its own, no storage, `@grant none`.
 7. Never runs on the big platforms (YouTube, X/Twitter, Netflix, Twitch, …):
-   `SKIP_ROOTS` at the top of the IIFE returns before any global is touched,
-   mirrored by `@exclude` apex + subdomain pairs in the header. Keep the two
-   lists in sync. Each frame is judged by its own URL; non-http(s) frames are
+   `SKIP_ROOTS` at the top of the IIFE returns before any global is touched
+   (one hostname check at load; no hooks or ongoing work). No `@exclude` in
+   the header: manager globs match anywhere in the URL and would drop small
+   sites. Each frame is judged by its own URL; non-http(s) frames are
    skipped.
 8. Until a video streams, `fetch` is a plain pass-through that returns the
-   native call's promise itself (no async wrapper).
+   native call's promise itself (no async wrapper). While streaming, a call
+   the script cannot classify goes to native fetch (rejects, never throws).
 
 ## Verification
 

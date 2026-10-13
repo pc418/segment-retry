@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadScript, FakeXHR, fakeFetch } from './harness.mjs';
+import { readFileSync } from 'node:fs';
+import { loadScript, FakeXHR, fakeFetch, startStreaming } from './harness.mjs';
 
 // Runs the script as a page on `href` and reports whether it touched anything.
 function patched(href) {
@@ -32,7 +33,15 @@ test('lookalike hosts and small video sites still get retries', () => {
   for (const href of [
     'https://notyoutube.com/', 'https://youtube.com.example.net/', 'https://x.company.com/',
     'https://small-video.example/play/1', 'http://192.168.1.5:8080/live.html',
+    'https://small-video.example/watch?src=https://www.youtube.com/x',
   ]) assert.deepEqual(patched(href), ALL, href);
+});
+
+// Manager @exclude globs match anywhere in the URL, so the header must not
+// carry them; the runtime check owns the scope (sol review 2026-10-13).
+test('the header has no @exclude lines', () => {
+  const header = readFileSync(new URL('../segment-retry.user.js', import.meta.url), 'utf8').split('==/UserScript==')[0];
+  assert.doesNotMatch(header, /@exclude/);
 });
 
 test('non-http documents (about:blank, data:, blob:) are left untouched', () => {
@@ -50,4 +59,16 @@ test('before any video, fetch hands back the native call result unchanged', () =
   assert.equal(calls.length, 1);
   assert.equal(calls[0].self, self);
   assert.deepEqual(calls[0].a, ['https://cdn.test/v/seg1.ts', init]);
+});
+
+test('while streaming, an unclassifiable fetch rejects like native instead of throwing', async () => {
+  const native = async (input, init) => { String(input); void init?.method; return new Response('x'); };
+  loadScript('https://small-video.example/', { fetch: native });
+  startStreaming();
+  const badInit = { get method() { throw new TypeError('bad method'); } };
+  let p;
+  assert.doesNotThrow(() => { p = globalThis.fetch('https://cdn.test/v/seg1.ts', badInit); });
+  await assert.rejects(p, /bad method/);
+  assert.doesNotThrow(() => { p = globalThis.fetch(Object.create(null)); });
+  await assert.rejects(p, TypeError);
 });

@@ -10,52 +10,6 @@
 // @homepageURL  https://github.com/pc418/segment-retry
 // @supportURL   https://github.com/pc418/segment-retry/issues
 // @match        *://*/*
-// @exclude      *://youtube.com/*
-// @exclude      *://*.youtube.com/*
-// @exclude      *://youtube-nocookie.com/*
-// @exclude      *://*.youtube-nocookie.com/*
-// @exclude      *://youtu.be/*
-// @exclude      *://*.youtu.be/*
-// @exclude      *://x.com/*
-// @exclude      *://*.x.com/*
-// @exclude      *://twitter.com/*
-// @exclude      *://*.twitter.com/*
-// @exclude      *://twimg.com/*
-// @exclude      *://*.twimg.com/*
-// @exclude      *://netflix.com/*
-// @exclude      *://*.netflix.com/*
-// @exclude      *://twitch.tv/*
-// @exclude      *://*.twitch.tv/*
-// @exclude      *://tiktok.com/*
-// @exclude      *://*.tiktok.com/*
-// @exclude      *://facebook.com/*
-// @exclude      *://*.facebook.com/*
-// @exclude      *://instagram.com/*
-// @exclude      *://*.instagram.com/*
-// @exclude      *://bilibili.com/*
-// @exclude      *://*.bilibili.com/*
-// @exclude      *://bilibili.tv/*
-// @exclude      *://*.bilibili.tv/*
-// @exclude      *://vimeo.com/*
-// @exclude      *://*.vimeo.com/*
-// @exclude      *://dailymotion.com/*
-// @exclude      *://*.dailymotion.com/*
-// @exclude      *://primevideo.com/*
-// @exclude      *://*.primevideo.com/*
-// @exclude      *://disneyplus.com/*
-// @exclude      *://*.disneyplus.com/*
-// @exclude      *://hulu.com/*
-// @exclude      *://*.hulu.com/*
-// @exclude      *://max.com/*
-// @exclude      *://*.max.com/*
-// @exclude      *://hbomax.com/*
-// @exclude      *://*.hbomax.com/*
-// @exclude      *://kick.com/*
-// @exclude      *://*.kick.com/*
-// @exclude      *://reddit.com/*
-// @exclude      *://*.reddit.com/*
-// @exclude      *://redditmedia.com/*
-// @exclude      *://*.redditmedia.com/*
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
@@ -65,8 +19,9 @@
 
   // Big platforms run their own players and CDNs: leave them alone. Each
   // frame is judged by its own URL, so a YouTube embed is skipped while the
-  // small site around it is not. Mirrors the @exclude lines above for
-  // managers that ignore them.
+  // small site around it is not. This check owns the scope on purpose:
+  // manager @exclude globs match anywhere in the URL (a small site with
+  // ?src=https://www.youtube.com/... would lose retries).
   const SKIP_ROOTS = [
     'youtube.com',
     'youtube-nocookie.com',
@@ -343,11 +298,16 @@
   // Plain (not async) so that, until a video streams, fetch costs one check.
   window.fetch = function (input, init) {
     if (!streaming) return nativeFetch.apply(this, arguments);
-    const isReq = input instanceof Request;
-    const url = isReq ? input.url : String(input);
-    const method = init?.method || (isReq ? input.method : 'GET');
-    if (!(String(method).toUpperCase() === 'GET' && !/^(blob|data):/i.test(url) && SEGMENT_URL.test(url))) {
-      return nativeFetch.apply(this, arguments);
+    let isReq, url;
+    try {
+      isReq = input instanceof Request;
+      url = isReq ? input.url : String(input);
+      const method = init?.method || (isReq ? input.method : 'GET');
+      if (!(String(method).toUpperCase() === 'GET' && !/^(blob|data):/i.test(url) && SEGMENT_URL.test(url))) {
+        return nativeFetch.apply(this, arguments);
+      }
+    } catch {
+      return nativeFetch.apply(this, arguments); // unclassifiable: the browser rejects it as it would anyway
     }
     return retryFetch.call(this, input, init, isReq, url);
   };
