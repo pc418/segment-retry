@@ -72,3 +72,12 @@ test('while streaming, an unclassifiable fetch rejects like native instead of th
   assert.doesNotThrow(() => { p = globalThis.fetch(Object.create(null)); });
   await assert.rejects(p, TypeError);
 });
+
+test('while streaming, a throwing upstream fetch is called once, not retried by the wrapper', () => {
+  let calls = 0;
+  const upstream = () => { calls++; throw new TypeError('upstream wrapper threw'); };
+  loadScript('https://small-video.example/', { fetch: upstream });
+  startStreaming();
+  assert.throws(() => globalThis.fetch('https://api.test/save', { method: 'POST' }), /upstream wrapper threw/);
+  assert.equal(calls, 1);
+});

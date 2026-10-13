@@ -298,18 +298,14 @@
   // Plain (not async) so that, until a video streams, fetch costs one check.
   window.fetch = function (input, init) {
     if (!streaming) return nativeFetch.apply(this, arguments);
-    let isReq, url;
+    let isReq, url, media = false;
     try {
       isReq = input instanceof Request;
       url = isReq ? input.url : String(input);
       const method = init?.method || (isReq ? input.method : 'GET');
-      if (!(String(method).toUpperCase() === 'GET' && !/^(blob|data):/i.test(url) && SEGMENT_URL.test(url))) {
-        return nativeFetch.apply(this, arguments);
-      }
-    } catch {
-      return nativeFetch.apply(this, arguments); // unclassifiable: the browser rejects it as it would anyway
-    }
-    return retryFetch.call(this, input, init, isReq, url);
+      media = String(method).toUpperCase() === 'GET' && !/^(blob|data):/i.test(url) && SEGMENT_URL.test(url);
+    } catch {} // unclassifiable: native fetch rejects it as it would anyway
+    return media ? retryFetch.call(this, input, init, isReq, url) : nativeFetch.apply(this, arguments);
   };
 
   async function retryFetch(input, init, isReq, url) {
