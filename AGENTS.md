@@ -15,7 +15,7 @@ Greasy Fork (Greasy Fork syncs from the raw GitHub URL).
   sped up 100x via an injected `setTimeout`.
 - `test/xhr.test.mjs`, `test/fetch.test.mjs`, `test/scope.test.mjs` — behaviour
   tests. `npm test`.
-- `docs/` — dated engineering records (`yymmdd-type-name.md`).
+- `docs/` — dated engineering records (`yymmdd-type-name.md`); local only, gitignored.
 
 ## Invariants
 
