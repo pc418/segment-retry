@@ -2,9 +2,9 @@
 // @name         Video Segment Retry — stop HLS/DASH skips and stalls
 // @name:zh-CN   视频分片重试 — 防止 HLS/DASH 跳秒和卡顿
 // @namespace    https://github.com/pc418/segment-retry
-// @version      1.0.0
-// @description  Retries video segment downloads that fail or arrive cut short, so the player doesn't jump over (or freeze at) the missing seconds. Works under any web player (hls.js, video.js, dash.js, shaka). Idle until a page starts streaming video.
-// @description:zh-CN 视频分片下载失败或被截断时自动重试，避免播放器跳过（或卡在）缺失的几秒。适用于 hls.js、video.js、dash.js、shaka 等任意网页播放器；页面开始播放流媒体前不做任何事。
+// @version      1.0.1
+// @description  Retries video segment downloads that fail or arrive cut short, so the player doesn't jump over (or freeze at) the missing seconds. Works under any web player (hls.js, video.js, dash.js, shaka). Idle until a page starts streaming video; never runs on the big platforms (YouTube, X, Netflix, Twitch, …), which have their own players.
+// @description:zh-CN 视频分片下载失败或被截断时自动重试，避免播放器跳过（或卡在）缺失的几秒。适用于 hls.js、video.js、dash.js、shaka 等任意网页播放器；页面开始播放流媒体前不做任何事；不在 YouTube、X、Netflix、Twitch 等大平台运行。
 // @author       pc418
 // @license      MIT
 // @homepageURL  https://github.com/pc418/segment-retry
@@ -16,6 +16,40 @@
 
 (() => {
   'use strict';
+
+  // Big platforms run their own players and CDNs: leave them alone. Each
+  // frame is judged by its own URL, so a YouTube embed is skipped while the
+  // small site around it is not. This check owns the scope on purpose:
+  // manager @exclude globs match anywhere in the URL (a small site with
+  // ?src=https://www.youtube.com/... would lose retries).
+  const SKIP_ROOTS = [
+    'youtube.com',
+    'youtube-nocookie.com',
+    'youtu.be',
+    'x.com',
+    'twitter.com',
+    'twimg.com',
+    'netflix.com',
+    'twitch.tv',
+    'tiktok.com',
+    'facebook.com',
+    'instagram.com',
+    'bilibili.com',
+    'bilibili.tv',
+    'vimeo.com',
+    'dailymotion.com',
+    'primevideo.com',
+    'disneyplus.com',
+    'hulu.com',
+    'max.com',
+    'hbomax.com',
+    'kick.com',
+    'reddit.com',
+    'redditmedia.com',
+  ];
+  if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
+  const host = location.hostname.toLowerCase().replace(/\.$/, '');
+  if (SKIP_ROOTS.some((d) => host === d || host.endsWith('.' + d))) return;
 
   const MAX_TRIES = 6;       // attempts per segment, first one included
   const BASE_DELAY_MS = 500; // backoff: 0.5 s, 1 s, 2 s, 4 s, 8 s
@@ -261,13 +295,20 @@
     });
   }
 
-  window.fetch = async function (input, init) {
-    const isReq = input instanceof Request;
-    const url = isReq ? input.url : String(input);
-    const method = init?.method || (isReq ? input.method : 'GET');
-    if (!(streaming && String(method).toUpperCase() === 'GET' && !/^(blob|data):/i.test(url) && SEGMENT_URL.test(url))) {
-      return nativeFetch.apply(this, arguments);
-    }
+  // Plain (not async) so that, until a video streams, fetch costs one check.
+  window.fetch = function (input, init) {
+    if (!streaming) return nativeFetch.apply(this, arguments);
+    let isReq, url, media = false;
+    try {
+      isReq = input instanceof Request;
+      url = isReq ? input.url : String(input);
+      const method = init?.method || (isReq ? input.method : 'GET');
+      media = String(method).toUpperCase() === 'GET' && !/^(blob|data):/i.test(url) && SEGMENT_URL.test(url);
+    } catch {} // unclassifiable: native fetch rejects it as it would anyway
+    return media ? retryFetch.call(this, input, init, isReq, url) : nativeFetch.apply(this, arguments);
+  };
+
+  async function retryFetch(input, init, isReq, url) {
     const signal = init?.signal || (isReq ? input.signal : undefined);
 
     for (let attempt = 1; ; attempt++) {
@@ -304,5 +345,5 @@
       log(`${reason}; retry ${attempt}/${MAX_TRIES - 1} in ${wait} ms:`, url);
       await sleep(wait, signal);
     }
-  };
+  }
 })();

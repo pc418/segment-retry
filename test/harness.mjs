@@ -107,11 +107,12 @@ export async function fakeFetch(input, init) {
 export const logs = [];
 
 // Installs the fakes as the page's globals, then runs the userscript once.
-export function loadScript() {
+export function loadScript(href = 'https://test.local/watch', { fetch = fakeFetch } = {}) {
   globalThis.window = globalThis;
-  globalThis.location = { host: 'test.local' };
+  const u = new URL(href);
+  globalThis.location = { href: u.href, protocol: u.protocol, host: u.host, hostname: u.hostname };
   globalThis.XMLHttpRequest = FakeXHR;
-  globalThis.fetch = fakeFetch;
+  globalThis.fetch = fetch;
   globalThis.MediaSource = class MediaSource { addSourceBuffer(mime) { return { mime }; } };
   const fastSetTimeout = (fn, ms, ...a) => setTimeout(fn, Math.ceil((ms || 0) / SPEEDUP), ...a);
   const realWarn = console.warn;
